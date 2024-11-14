@@ -132,7 +132,7 @@ if (ground) {
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 pmremGenerator.compileEquirectangularShader();
 let envMapIntensity = 1; // Default intensity
-new RGBELoader().setPath('assets/').load('environment.hdr', function (texture) {
+new RGBELoader().setPath('../assets/').load('environment.hdr', function (texture) {
     const envMap = pmremGenerator.fromEquirectangular(texture).texture;
     scene.environment = envMap;
     texture.dispose();

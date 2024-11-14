@@ -1,0 +1,16 @@
+version: '3'
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - HOST=0.0.0.0
+    volumes:
+      - /app/node_modules
+      - .:/app
+    expose:
+      - "3000"
+    ports:
+      - "3000:3000"

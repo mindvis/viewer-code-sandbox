@@ -4,7 +4,7 @@ import { useRoutes } from "react-router-dom";
 // project-imports
 import MainLayout from "layout/MainLayout";
 import Loadable from "components/Loadable";
-import ComponentsRoutes from "./ComponentsRoutes";
+//import ComponentsRoutes from "./ComponentsRoutes";
 // import LoginRoutes from './LoginRoutes';
 import MainRoutes from "./MainRoutes";
 // const ThreeDViewer = Loadable(lazy(() => import("pages/threedviewer")));
@@ -27,7 +27,7 @@ export default function ThemeRoutes() {
       ],
     },
     // LoginRoutes,
-    ComponentsRoutes,
+    //ComponentsRoutes,
     MainRoutes,
   ]);
 }

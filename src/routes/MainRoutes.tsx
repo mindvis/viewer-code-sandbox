@@ -3,6 +3,7 @@ import { lazy } from "react";
 // project-imports
 import MainLayout from "layout/MainLayout";
 import CommonLayout from "layout/CommonLayout";
+import IframeLayout from "layout/IframeLayout";
 import Loadable from "components/Loadable";
 // import AuthGuard from "utils/route-guard/AuthGuard";
 
@@ -19,6 +20,7 @@ import Loadable from "components/Loadable";
 // const ThreeDModelAdd = Loadable(lazy(() => import("pages/threed/add")));
 // const ThreeDModelEdit = Loadable(lazy(() => import("pages/threed/edit")));
 const ThreeDModelView = Loadable(lazy(() => import("pages/threed/view")));
+const LeftViewer = Loadable(lazy(() => import("pages/leftviewer")));
 
 // const UsersList = Loadable(lazy(() => import("pages/users/list")));
 // const UsersAdd = Loadable(lazy(() => import("pages/users/add")));
@@ -303,24 +305,13 @@ const MainRoutes = {
         {
           path: "3d-model",
           children: [
-            // {
-            //   path: "list",
-            //   element: <ThreeDModels />,
-            // },
-            // {
-            //   path: "add",
-            //   element: <ThreeDModelAdd />,
-            // },
-            // {
-            //   path: "edit/:id",
-            //   element: <ThreeDModelEdit />,
-            // },
             {
               path: "view",
               element: <ThreeDModelView />,
             },
           ],
         },
+        
         // {
         //   path: "users",
         //   children: [
@@ -736,6 +727,16 @@ const MainRoutes = {
         {
           path: "3d-viewer",
           element: <ThreeDViewer />,
+        },
+      ],
+    },
+    {
+      path: "/",
+      element:<IframeLayout />,
+      children: [
+        {
+          path: "left-viewer",
+          element: <LeftViewer />,
         },
       ],
     },

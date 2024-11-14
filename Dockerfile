@@ -1,8 +1,14 @@
-# Frontend Dockerfile
-#FROM node:lts-alpine AS build-stage
-#WORKDIR /var/www/html
+# Dockerfile for frontend
+FROM node:14
 
-#COPY package*.json ./
-#RUN npm i --legacy-peer-deps
+WORKDIR /app
 
-#COPY . .
+COPY package*.json ./
+
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]

@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 
 // material-ui
-import { Grid } from '@mui/material';
+import { Grid, CardMedia  } from '@mui/material';
 
 
 // project-imports
-import ModelViewLeft from 'sections/cards/models/ModelViewLeft';
+// import ModelViewLeft from 'sections/cards/models/ModelViewLeft';
 import ModelViewRight from 'sections/cards/models/ModelViewRight';
+
+const mediaSX = {
+  width: "100%",
+  height: "100%",
+  border: "none",
+};
 
 // ==============================|| PROFILE - USER ||============================== //
 
@@ -28,10 +34,11 @@ const ThreeDModelView = () => {
     inputRef.current?.focus();
   };
 
+  const link = process.env.REACT_APP_API_URL + `/left-viewer/`;
   return (
     <Grid container spacing={3}>
-      <Grid item xs={12} md={8} ref={containerRef}>
-        <ModelViewLeft  containerSize={containerSize} />
+      <Grid item xs={12} md={8} style={{ minHeight: "50vh" }}>
+        <CardMedia component="iframe" src={link} sx={mediaSX} />
       </Grid>
       <Grid item xs={12} md={4}>
         <ModelViewRight focusInput={focusInput} />
