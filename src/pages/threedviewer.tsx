@@ -1168,7 +1168,7 @@ animate();
 
 // handle the API response
 const handleAPIResponse = () => {
-  const fileUrl = "/c35-0050-1718081919473.fbx";
+  const fileUrl = "/BO2.glb";
   const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
   console.log(fileUrl);
   fetch(fileUrl)

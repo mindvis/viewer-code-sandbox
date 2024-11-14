@@ -1,19 +1,28 @@
 // @ts-nocheck
 // project-imports
-import { Box, Grid } from "@mui/material";
+import { Grid, Stack, Typography, Box } from "@mui/material";
 // import AuthWrapper from 'sections/auth/AuthWrapper';
-import axios from "axios";
-import * as dat from "dat.gui";
 import { useParams } from "react-router";
+import axios from "axios";
 import * as THREE from "three";
+import * as dat from "dat.gui";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader";
-import {store} from 'store';
-import { openSnackbar } from 'store/reducers/snackbar';
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
+
+let mixer;
+const clock = new THREE.Clock();
+let currentAnimation = null;
+
+let mediaRecorder;
+let recordedChunks = [];
+let isCapturing = false;
+
+let captureFrames = [];
+let captureStartTime;
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -95,7 +104,7 @@ scene.traverse((obj) => {
 });
 
 // Set up shadow properties for the light
-const light = new THREE.DirectionalLight(0xffffff, 1);
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
 light.position.set(0, 10, 0);
 light.castShadow = true;
 scene.add(light);
@@ -122,10 +131,8 @@ if (ground) {
 // HDR Environment setup
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 pmremGenerator.compileEquirectangularShader();
-let envMapIntensity = 0.5; // Default intensity
-new RGBELoader()
-  .setPath("/assets/")
-  .load("environment.hdr", function (texture) {
+let envMapIntensity = 1; // Default intensity
+new RGBELoader().setPath('../assets/').load('environment.hdr', function (texture) {
     const envMap = pmremGenerator.fromEquirectangular(texture).texture;
     scene.environment = envMap;
     texture.dispose();
@@ -133,34 +140,49 @@ new RGBELoader()
 
     // Apply environment map intensity to all relevant materials in the scene
     scene.traverse((obj) => {
-      if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
-        obj.material.envMap = envMap;
-        obj.material.envMapIntensity = envMapIntensity;
-        obj.material.needsUpdate = true;
-      }
+        if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
+            obj.material.envMap = envMap;
+            obj.material.envMapIntensity = envMapIntensity;
+            obj.material.needsUpdate = true;
+        }
     });
     // Ensure ground plane also uses the environment map
     if (ground && ground.material instanceof THREE.ShadowMaterial) {
-      ground.material.envMap = envMap;
-      ground.material.envMapIntensity = envMapIntensity;
-      ground.material.needsUpdate = true;
+    ground.material.envMap = envMap;
+    ground.material.envMapIntensity = envMapIntensity;
+    ground.material.needsUpdate = true;
     }
-  });
+});
+
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+// Enhanced Antialiasing and Texture Filtering (within model loading functions)
+/*function enhanceMaterial(material) {
+  if (material.map) {
+    material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  }
+}*/
 
 // Enhanced Antialiasing and Texture Filtering (within model loading functions)
 function enhanceMaterial(material) {
   if (material.map) {
-    material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      if (isMobileDevice()) {
+          material.map.minFilter = THREE.LinearMipmapLinearFilter;
+          material.map.generateMipmaps = true;
+      }
   }
+  if (material.normalMap && isMobileDevice()) {
+      material.normalMap.minFilter = THREE.LinearMipmapLinearFilter;
+      material.normalMap.generateMipmaps = true;
+  }
+  // Apply to other texture types as needed
 }
 
-// Animation loop
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
+controls.autoRotate = false;
+controls.autoRotateSpeed = 1;
 
 // Dropzone and file input setup
 // const dropzone = document.getElementById("dropzone")!;
@@ -193,61 +215,97 @@ animate();
 //   }
 // });
 
-function handleFile(file) {
-  const fileType = file.name.split(".").pop().toLowerCase();
-  document.getElementById("loading-indicator").style.display = "block";
-  // hideDropzone();
+// Update this function in your existing loaders (GLB, FBX, STL)
+function applyMaterialOptimizations(object) {
+  object.traverse((child) => {
+      if (child.isMesh) {
+          enhanceMaterial(child.material);
+      }
+  });
+}
 
-  if (fileType === "glb" || fileType === "gltf") {
-    loadGLBFile(file);
-  } else if (fileType === "fbx") {
-    loadFBXFile(file);
-  } else if (fileType === "stl") {
-    loadSTLFile(file);
-  } else {
-    alert(
-      "Unsupported file format. Please select GLB, GLTF, FBX, or STL files."
-    );
-    document.getElementById("loading-indicator").style.display = "none";
+function optimizeTexture(texture, maxSize = 1024) {
+  if (!isMobileDevice()) return; // Skip optimization for non-mobile devices
+
+  if (texture.image && (texture.image.width > maxSize || texture.image.height > maxSize)) {
+      const scale = maxSize / Math.max(texture.image.width, texture.image.height);
+      const newWidth = Math.floor(texture.image.width * scale);
+      const newHeight = Math.floor(texture.image.height * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = newWidth;
+      canvas.height = newHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(texture.image, 0, 0, newWidth, newHeight);
+
+      texture.image = canvas;
+      texture.needsUpdate = true;
   }
+}
+
+function optimizeModelTextures(object, maxTextureSize = 1024) {
+  if (!isMobileDevice()) return; // Skip optimization for non-mobile devices
+
+  object.traverse((child) => {
+      if (child.isMesh) {
+          if (child.material.map) optimizeTexture(child.material.map, maxTextureSize);
+          if (child.material.normalMap) optimizeTexture(child.material.normalMap, maxTextureSize);
+          // Apply to other texture types as needed
+      }
+  });
+}
+
+
+function handleFile(file) {
+  const fileType = file.name.split('.').pop().toLowerCase();
+  document.getElementById('loading-indicator').style.display = 'block';
+  //hideDropzone();
+
+  if (fileType === 'glb' || fileType === 'gltf') {
+      loadGLBFile(file);
+  } else if (fileType === 'fbx') {
+      loadFBXFile(file);
+  } else if (fileType === 'stl') {
+      loadSTLFile(file);
+  } else {
+      alert('Unsupported file format. Please select GLB, GLTF, FBX, or STL files.');
+      document.getElementById('loading-indicator').style.display = 'none';
+  }
+  setTimeout(showModelDimensions, 100000);
 }
 
 function loadFBXFile(file) {
   const reader = new FileReader();
   reader.onload = (event) => {
-    const loader = new FBXLoader();
-    loader.load(
-      URL.createObjectURL(file),
-      (fbx) => {
-        fbx.traverse(function (child) {
-          if (child.isMesh) {
-            const material = new THREE.MeshStandardMaterial({
-              color: 0x808080,
-              roughness: 0.7,
-              metalness: 0.3,
-            });
-            enhanceMaterial(material);
-            child.material = material;
-            child.castShadow = true;
+      const loader = new FBXLoader();
+      loader.load(
+          URL.createObjectURL(file),
+          (fbx) => {
+              fbx.traverse(function (child) {
+                  if (child.isMesh) {
+                      const material = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.7, metalness: 0.3 });
+                      enhanceMaterial(material);
+                      child.material = material;
+                      child.castShadow = true;
+                      //fbx.scale.multiplyScalar(0.01);
+                  }
+              });
+              scene.add(fbx);
+              centerAndScaleModel(fbx); // Ensure model is scaled and centered
+              addBoundingBox(fbx); // Apply bounding box
+              adjustGroundPlane(fbx);
+              document.getElementById('loading-indicator').style.display = 'none'; // Hide loading indicator
+          },
+          (xhr) => {
+              // Update the loading progress
+              const percentComplete = (xhr.loaded / xhr.total) * 100;
+              document.getElementById('loading-progress').style.width = percentComplete + '%';
+          },
+          (error) => {
+              console.error('Error loading FBX file:', error);
+              document.getElementById('loading-indicator').style.display = 'none'; // Hide loading indicator
           }
-        });
-        scene.add(fbx);
-        centerAndScaleModel(fbx); // Ensure model is scaled and centered
-        addBoundingBox(fbx); // Apply bounding box
-        adjustGroundPlane(fbx);
-        document.getElementById("loading-indicator").style.display = "none"; // Hide loading indicator
-      },
-      (xhr) => {
-        // Update the loading progress
-        const percentComplete = (xhr.loaded / xhr.total) * 100;
-        document.getElementById("loading-progress").style.width =
-          percentComplete + "%";
-      },
-      (error) => {
-        console.error("Error loading FBX file:", error);
-        document.getElementById("loading-indicator").style.display = "none"; // Hide loading indicator
-      }
-    );
+      );
   };
   reader.readAsArrayBuffer(file);
 }
@@ -255,42 +313,49 @@ function loadFBXFile(file) {
 function loadGLBFile(file) {
   const reader = new FileReader();
   reader.onload = async (event) => {
-    hideDropzone();
-    const loader = new GLTFLoader();
+      //hideDropzone();
+      const loader = new GLTFLoader();
 
-    // Initialize DRACOLoader
-    const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath(
-      "https://www.gstatic.com/draco/versioned/decoders/1.5.6/"
-    ); // Use the CDN path
-    dracoLoader.setDecoderConfig({ type: "js" }); // Use JavaScript decoder
-    loader.setDRACOLoader(dracoLoader);
+// Initialize DRACOLoader
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/'); // Use the CDN path
+dracoLoader.setDecoderConfig({ type: 'js' }); // Use JavaScript decoder
+loader.setDRACOLoader(dracoLoader);
 
-    loader.load(
-      URL.createObjectURL(file),
-      (gltf) => {
-        gltf.scene.traverse(function (node) {
-          if (node.isMesh) {
-            node.castShadow = true;
-            enhanceMaterial(node.material);
+      loader.load(
+          URL.createObjectURL(file),
+          (gltf) => {
+              applyMaterialOptimizations(gltf.scene);
+              optimizeModelTextures(gltf.scene, 1024);
+              gltf.scene.traverse(function(node){
+                  if (node.isMesh){
+                      node.castShadow = true;
+                      enhanceMaterial(node.material);
+                  }
+              });
+              scene.add(gltf.scene);
+              centerAndScaleModel(gltf.scene); // Ensure model is scaled and centered before calculating the bounding box
+              addBoundingBox(gltf.scene); // Now the bounding box will accurately reflect the model size
+              adjustGroundPlane(gltf.scene);
+              document.getElementById('loading-indicator').style.display = 'none';
+              // Handle animations
+              if (gltf.animations && gltf.animations.length) {
+                  mixer = new THREE.AnimationMixer(gltf.scene);
+                  setupAnimationGUI(gltf.animations);
+                  console.log(`Loaded ${gltf.animations.length} animations`);
+              } else {
+                  console.log('No animations found in the GLTF file');
+              }           
+          },
+          (xhr) => {
+              const percentComplete = (xhr.loaded / xhr.total) * 100;
+              document.getElementById('loading-progress').style.width = percentComplete + '%';
+          },
+          (error) => {
+              console.error('Error loading GLB file:', error);
+              document.getElementById('loading-indicator').style.display = 'none';
           }
-        });
-        scene.add(gltf.scene);
-        centerAndScaleModel(gltf.scene); // Ensure model is scaled and centered before calculating the bounding box
-        addBoundingBox(gltf.scene); // Now the bounding box will accurately reflect the model size
-        adjustGroundPlane(gltf.scene);
-        document.getElementById("loading-indicator").style.display = "none";
-      },
-      (xhr) => {
-        const percentComplete = (xhr.loaded / xhr.total) * 100;
-        document.getElementById("loading-progress").style.width =
-          percentComplete + "%";
-      },
-      (error) => {
-        console.error("Error loading GLB file:", error);
-        document.getElementById("loading-indicator").style.display = "none";
-      }
-    );
+      );
   };
   reader.readAsArrayBuffer(file);
 }
@@ -298,35 +363,30 @@ function loadGLBFile(file) {
 function loadSTLFile(file) {
   const reader = new FileReader();
   reader.onload = (event) => {
-    const loader = new STLLoader();
-    loader.load(
-      URL.createObjectURL(file),
-      (geometry) => {
-        const material = new THREE.MeshStandardMaterial({
-          color: 0x808080,
-          roughness: 0.7,
-          metalness: 0.3,
-        });
-        enhanceMaterial(material);
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        scene.add(mesh);
-        centerAndScaleModel(mesh); // Ensure model is scaled and centered
-        addBoundingBox(mesh); // Apply bounding box
-        adjustGroundPlane(mesh);
-        document.getElementById("loading-indicator").style.display = "none"; // Hide loading indicator
-      },
-      (xhr) => {
-        // Update the loading progress
-        const percentComplete = (xhr.loaded / xhr.total) * 100;
-        document.getElementById("loading-progress").style.width =
-          percentComplete + "%";
-      },
-      (error) => {
-        console.error("Error loading STL file:", error);
-        document.getElementById("loading-indicator").style.display = "none"; // Hide loading indicator
-      }
-    );
+      const loader = new STLLoader();
+      loader.load(
+          URL.createObjectURL(file),
+          (geometry) => {
+              const material = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.7, metalness: 0.3 });
+              enhanceMaterial(material);               
+              const mesh = new THREE.Mesh(geometry, material);
+              mesh.castShadow = true;
+              scene.add(mesh);
+              centerAndScaleModel(mesh); // Ensure model is scaled and centered
+              addBoundingBox(mesh); // Apply bounding box
+              adjustGroundPlane(mesh);
+              document.getElementById('loading-indicator').style.display = 'none'; // Hide loading indicator
+          },
+          (xhr) => {
+              // Update the loading progress
+              const percentComplete = (xhr.loaded / xhr.total) * 100;
+              document.getElementById('loading-progress').style.width = percentComplete + '%';
+          },
+          (error) => {
+              console.error('Error loading STL file:', error);
+              document.getElementById('loading-indicator').style.display = 'none'; // Hide loading indicator
+          }
+      );
   };
   reader.readAsArrayBuffer(file);
 }
@@ -335,59 +395,159 @@ function loadSTLFile(file) {
 function loadDracoCompressedFile(file) {
   const reader = new FileReader();
   reader.onload = (event) => {
-    const loader = new GLTFLoader();
-    const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath("/path/to/draco/"); // Set path to Draco decoder
-    loader.setDRACOLoader(dracoLoader);
+      const loader = new GLTFLoader();
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath('/path/to/draco/'); // Set path to Draco decoder
+      loader.setDRACOLoader(dracoLoader);
 
-    loader.load(
-      URL.createObjectURL(file),
-      (gltf) => {
-        gltf.scene.traverse(function (node) {
-          if (node.isMesh) {
-            node.castShadow = true;
-            enhanceMaterial(node.material);
+      loader.load(
+          URL.createObjectURL(file),
+          (gltf) => {
+              applyMaterialOptimizations(gltf.scene);
+              optimizeModelTextures(gltf.scene, 1024);
+              gltf.scene.traverse(function(node) {
+                  if (node.isMesh) {
+                      node.castShadow = true;
+                      enhanceMaterial(node.material);
+                  }
+              });
+              scene.add(gltf.scene);
+              centerAndScaleModel(gltf.scene);
+              addBoundingBox(gltf.scene);
+              adjustGroundPlane(gltf.scene);
+              document.getElementById('loading-indicator').style.display = 'none';
+              // Handle animations
+              if (gltf.animations && gltf.animations.length) {
+                  mixer = new THREE.AnimationMixer(gltf.scene);
+                  setupAnimationGUI(gltf.animations);
+                  console.log(`Loaded ${gltf.animations.length} animations`);
+              } else {
+                  console.log('No animations found in the GLTF file');
+              }
+          },
+          (xhr) => {
+              const percentComplete = (xhr.loaded / xhr.total) * 100;
+              document.getElementById('loading-progress').style.width = percentComplete + '%';
+          },
+          (error) => {
+              console.error('Error loading Draco compressed file:', error);
+              document.getElementById('loading-indicator').style.display = 'none';
           }
-        });
-        scene.add(gltf.scene);
-        centerAndScaleModel(gltf.scene);
-        addBoundingBox(gltf.scene);
-        adjustGroundPlane(gltf.scene);
-        document.getElementById("loading-indicator").style.display = "none";
-      },
-      (xhr) => {
-        const percentComplete = (xhr.loaded / xhr.total) * 100;
-        document.getElementById("loading-progress").style.width =
-          percentComplete + "%";
-      },
-      (error) => {
-        console.error("Error loading Draco compressed file:", error);
-        document.getElementById("loading-indicator").style.display = "none";
-      }
-    );
+      );
   };
   reader.readAsArrayBuffer(file);
+}
+
+function setupAnimationGUI(animations) {
+  if (gui.__folders['Animations']) {
+      gui.removeFolder(gui.__folders['Animations']);
+  }
+  const animationFolder = gui.addFolder('Animations');
+  animationFolder.open();
+
+  const animationControls = {
+      play: false,
+      currentAnimation: 0,
+  };
+
+  animationFolder.add(animationControls, 'play').name('Play/Pause').onChange((value) => {
+      if (value) {
+          if (mixer) {
+              currentAnimation = mixer.clipAction(animations[animationControls.currentAnimation]);
+              currentAnimation.reset().play();
+              console.log('Animation started');
+          }
+      } else {
+          if (currentAnimation) {
+              currentAnimation.stop();
+              console.log('Animation stopped');
+          }
+      }
+  });
+
+  if (animations.length > 1) {
+      animationFolder.add(animationControls, 'currentAnimation', 0, animations.length - 1, 1)
+          .name('Animation')
+          .onChange((value) => {
+              if (currentAnimation) {
+                  currentAnimation.stop();
+              }
+              currentAnimation = mixer.clipAction(animations[value]);
+              if (animationControls.play) {
+                  currentAnimation.reset().play();
+                  console.log(`Switched to animation ${value}`);
+              }
+          });
+  }
 }
 
 let boundingBoxHelper; // Reference to the bounding box helper
 let boundingBoxDimensions; // Store dimensions here
 
-function addBoundingBox(object) {
-  const box = new THREE.Box3().setFromObject(object);
-  if (boundingBoxHelper) scene.remove(boundingBoxHelper);
-  boundingBoxHelper = new THREE.BoxHelper(object, 0x8b0000);
-  scene.add(boundingBoxHelper);
+let originalModelSize;
+let modelScaleFactor;
 
-  // Calculate and store dimensions in meters
-  const size = box.getSize(new THREE.Vector3());
-  boundingBoxDimensions = {
-    x: Number(size.x.toFixed(3)),
-    y: Number(size.y.toFixed(3)),
-    z: Number(size.z.toFixed(3)),
-    units: "meters",
-  };
-  boundingBoxHelper.visible = false;
-  fitCameraToObject(object);
+function addBoundingBox(object) {
+    const box = new THREE.Box3().setFromObject(object);
+    if (boundingBoxHelper) scene.remove(boundingBoxHelper);
+    boundingBoxHelper = new THREE.BoxHelper(object, 0x8B0000);
+    scene.add(boundingBoxHelper);
+
+    // Calculate and store dimensions in meters
+    const size = box.getSize(new THREE.Vector3());
+    boundingBoxDimensions = {
+        x: Number((originalModelSize.x).toFixed(1)),
+        y: Number((originalModelSize.y).toFixed(1)),
+        z: Number((originalModelSize.z).toFixed(1)),
+        units: "cm"
+    };
+    boundingBoxHelper.visible = false;
+    fitCameraToObject(object);
+    updateDimensionsDisplay();
+}
+
+function updateDimensionsDisplay() {
+    const dimensionsDiv = document.getElementById('model-dimensions');
+    if (dimensionsDiv) {
+        dimensionsDiv.innerHTML = `
+            <h3>Model Dimensions</h3>
+            <p>Width: ${boundingBoxDimensions.x} ${boundingBoxDimensions.units}</p>
+            <p>Height: ${boundingBoxDimensions.y} ${boundingBoxDimensions.units}</p>
+            <p>Depth: ${boundingBoxDimensions.z} ${boundingBoxDimensions.units}</p>
+        `;
+    }
+}
+
+function showModelDimensions() {
+  if (boundingBoxDimensions) {
+      const { x, y, z, units } = boundingBoxDimensions;
+      console.log(`Model Dimensions:`);
+      console.log(`Width: ${x} ${units}`);
+      console.log(`Height: ${y} ${units}`);
+      console.log(`Depth: ${z} ${units}`);
+      
+      // Create or update a div to display dimensions on the page
+      let dimensionsDiv = document.getElementById('model-dimensions');
+      if (!dimensionsDiv) {
+          dimensionsDiv = document.createElement('div');
+          dimensionsDiv.id = 'model-dimensions';
+          document.body.appendChild(dimensionsDiv);
+      }
+      dimensionsDiv.innerHTML = `
+          <h3>Model Dimensions</h3>
+          <p>Width: ${x} ${units}</p>
+          <p>Height: ${y} ${units}</p>
+          <p>Depth: ${z} ${units}</p>
+      `;
+      dimensionsDiv.style.position = 'absolute';
+      dimensionsDiv.style.top = '10px';
+      dimensionsDiv.style.left = '10px';
+      dimensionsDiv.style.backgroundColor = 'rgba(255, 255, 255, 0.7)';
+      dimensionsDiv.style.padding = '10px';
+      dimensionsDiv.style.borderRadius = '5px';
+  } else {
+      console.log("No model dimensions available.");
+  }
 }
 
 function fitCameraToObject(object) {
@@ -397,14 +557,11 @@ function fitCameraToObject(object) {
   const center = boundingBox.getCenter(new THREE.Vector3()); // Get bounding box center
 
   const maxSize = Math.max(size.x, size.y, size.z);
-  const fitHeightDistance =
-    maxSize / (2 * Math.atan((Math.PI * camera.fov) / 360));
+  const fitHeightDistance = maxSize / (2 * Math.atan(Math.PI * camera.fov / 360));
   const fitWidthDistance = fitHeightDistance / camera.aspect;
   const distance = Math.max(fitHeightDistance, fitWidthDistance);
 
-  const direction = new THREE.Vector3()
-    .subVectors(camera.position, center)
-    .normalize();
+  const direction = new THREE.Vector3().subVectors(camera.position, center).normalize();
 
   // Move the camera to a position distance away from the center, maintaining its direction
   camera.position.copy(direction.multiplyScalar(distance).add(center));
@@ -423,6 +580,7 @@ function fitCameraToObject(object) {
   controls.update();
 }
 
+
 // After model is loaded and added to the scene
 function centerAndScaleModel(model) {
   const boundingBox = new THREE.Box3().setFromObject(model);
@@ -430,12 +588,29 @@ function centerAndScaleModel(model) {
   const maxSize = Math.max(size.x, size.y, size.z);
   const desiredMaxSize = 2; // Adjust based on desired viewport coverage
   const scaleRatio = desiredMaxSize / maxSize;
+
+  originalModelSize = {
+      x: size.x * 100,
+      y: size.y * 100,
+      z: size.z * 100
+  };
+
   model.scale.set(scaleRatio, scaleRatio, scaleRatio);
 
-  controls.minDistance = 3; // Minimum zoom level
+  addBoundingBox(model);
+  showModelDimensions();
+
+  controls.minDistance = 4; // Minimum zoom level
   controls.maxDistance = 10; // Maximum zoom level
 
+  updateAxesHelperPosition(model);
   adjustCameraView(model);
+
+  autoRotateControls.enabled = false;
+  controls.autoRotate = false;
+  for (let i in gui.__controllers) {
+      gui.__controllers[i].updateDisplay();
+  }
 }
 
 function adjustCameraView(model: THREE.Object3D) {
@@ -446,9 +621,7 @@ function adjustCameraView(model: THREE.Object3D) {
   const initialDistance = 6;
 
   // Adjust camera position for initial view
-  const direction = new THREE.Vector3()
-    .subVectors(camera.position, center)
-    .normalize();
+  const direction = new THREE.Vector3().subVectors(camera.position, center).normalize();
   camera.position.copy(direction.multiplyScalar(initialDistance).add(center));
 
   // Update controls and camera
@@ -459,9 +632,9 @@ function adjustCameraView(model: THREE.Object3D) {
   camera.updateProjectionMatrix();
 }
 
-function hideDropzone() {
-  dropzone.style.display = "none";
-}
+// function hideDropzone() {
+//   dropzone.style.display = "none";
+// }
 
 // Window resize event listener
 window.addEventListener("resize", () => {
@@ -496,7 +669,7 @@ gui
 
 // Add environment map intensity control
 const envMapControls = {
-  envMapIntensity: 0.5, // Default intensity
+  envMapIntensity: 1, // Default intensity
 };
 
 // Add the environment map intensity slider to the GUI
@@ -573,6 +746,52 @@ gui
   .onChange((value) => {
     renderer.toneMappingExposure = value;
   });
+
+  const autoRotateControls = {
+    enabled: false,
+    speed: 1
+};
+
+gui.add(autoRotateControls, 'enabled').name('Auto Rotate').onChange(value => {
+    controls.autoRotate = value;
+});
+gui.add(autoRotateControls, 'speed', 0.1, 5).name('Rotation Speed').onChange(value => {
+    controls.autoRotateSpeed = value;
+});
+
+function resetAndStartAutoRotate() {
+  // Get the bounding box of the loaded model
+  const boundingBox = new THREE.Box3().setFromObject(scene);
+  const center = boundingBox.getCenter(new THREE.Vector3());
+  
+  // Calculate the size of the bounding box
+  const size = boundingBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  
+  // Set camera position based on the bounding box
+  const distance = maxDim * 2; // Adjust this multiplier as needed
+  camera.position.set(center.x, center.y, center.z + distance);
+  camera.lookAt(center);
+  
+  // Reset controls target to the center of the model
+  controls.target.copy(center);
+  
+  // Enable auto-rotation
+  autoRotateControls.enabled = false;
+  controls.autoRotate = false;
+  
+  // Update camera and controls
+  camera.updateProjectionMatrix();
+  controls.update();
+  
+  // Update GUI
+  for (let i in gui.__controllers) {
+      gui.__controllers[i].updateDisplay();
+  }
+}
+
+gui.add({ resetAndRotate: resetAndStartAutoRotate }, 'resetAndRotate').name('Reset & Auto-Rotate');
+
 
 const settings = {
   backgroundColor: "#ffffff", // Default white background
@@ -679,7 +898,7 @@ function exportSceneAsPNG() {
 }
 
 // Update the export dimensions function
-gui
+/*gui
   .add(
     {
       exportDimensions: function () {
@@ -705,197 +924,252 @@ gui
     },
     "exportDimensions"
   )
-  .name("Export Dimensions");
+  .name("Export Dimensions");*/
+
+
 // Add button in dat.GUI to toggle bounding box visibility
-gui
-  .add(
-    {
-      toggleBoundingBox: function () {
-        if (boundingBoxHelper)
-          boundingBoxHelper.visible = !boundingBoxHelper.visible;
-      },
-    },
-    "toggleBoundingBox"
-  )
-  .name("Toggle Bounding Box");
+gui.add({ toggleDimensions: function() {
+    const dimensionsDiv = document.getElementById('model-dimensions');
+    if (dimensionsDiv) {
+        dimensionsDiv.style.display = dimensionsDiv.style.display === 'none' ? 'block' : 'none';
+    } else {
+        showModelDimensions();
+    }
+}}, 'toggleDimensions').name('Toggle Dimensions');
+
+// Add button in dat.GUI to toggle bounding box visibility
+gui.add({toggleBoundingBox: function() {
+    if (boundingBoxHelper) boundingBoxHelper.visible = !boundingBoxHelper.visible;
+}}, 'toggleBoundingBox').name('Toggle Bounding Box');
 
 const guiControls = {
-  toggleBoundingBox: function () {
-    if (boundingBoxHelper)
-      boundingBoxHelper.visible = !boundingBoxHelper.visible;
-  },
+    toggleBoundingBox: function() {
+        if (boundingBoxHelper) boundingBoxHelper.visible = !boundingBoxHelper.visible;
+    },
+    
 };
+
 // Function to get current scene settings
 function getSceneSettings() {
-  return {
-    shadowsEnabled: shadowControls.shadowsEnabled,
-    envMapIntensity: envMapControls.envMapIntensity,
-    toneMapping: toneMappingControl.toneMapping,
-    outputEncoding: outputEncodingControl.outputEncoding,
-    exposure: exposureControl.exposure,
-    backgroundColor: settings.backgroundColor,
-    backgroundIntensity: settings.backgroundIntensity,
-    transparentBackground: settings.transparentBackground,
-    //   autoRotateEnabled: autoRotateControls.enabled,
-    //    autoRotateSpeed: autoRotateControls.speed
-  };
-}
-
-// Function to export scene settings
-function exportSceneSetting() {
-  const sceneSettings = getSceneSettings();
-  console.log(JSON.stringify(sceneSettings, null, 2));
-  const blob = new Blob([JSON.stringify(sceneSettings, null, 2)], { type: 'application/json' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = 'scene_settings.json';
-  link.click();
+    return {
+        shadowsEnabled: shadowControls.shadowsEnabled,
+        envMapIntensity: envMapControls.envMapIntensity,
+        toneMapping: toneMappingControl.toneMapping,
+        outputEncoding: outputEncodingControl.outputEncoding,
+        exposure: exposureControl.exposure,
+        backgroundColor: settings.backgroundColor,
+        backgroundIntensity: settings.backgroundIntensity,
+        transparentBackground: settings.transparentBackground,
+        autoRotateEnabled: autoRotateControls.enabled,
+        autoRotateSpeed: autoRotateControls.speed
+    };
 }
 
 // Function to export scene settings
 function exportSceneSettings() {
-  // Get the scene settings as a JSON string
-  const sceneSettings = getSceneSettings();
-  console.log(JSON.stringify(sceneSettings, null, 2));
-  // Get the pathname from the current URL
-  const path = window.location.pathname;
-  // Check for both patterns to extract the ID
-  const id = path.match(/\/3d-models\/view\/([^/]+)/)?.[1] || path.match(/\/left-viewer\/([^/]+)/)?.[1];
-    
-  const jsonString = JSON.stringify(sceneSettings, null, 2);
-
-  // Send the JSON data to the server with Axios
-  axios
-    .post(process.env.REACT_APP_API_URL + "/api/model/saveSettings/"+id, {
-      settings: jsonString
-    }, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("serviceToken")}`,
-      },
-    })
-    .then((response) => {
-      store.dispatch(
-        openSnackbar({
-          open: true,
-          message: 'Settings have been saved successfully!',
-          autoHideDuration: 5000,
-          variant: 'alert',
-          alert: {
-            color: 'success',
-          },
-          close: true,
-        })
-      );
-    });
+    const sceneSettings = getSceneSettings();
+    const blob = new Blob([JSON.stringify(sceneSettings, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'scene_settings.json';
+    link.click();
 }
 
 // Function to import scene settings
-// function importSceneSettings(file) {
-//   const reader = new FileReader();
-//   reader.onload = function (e) {
-//     const settings = JSON.parse(e.target.result);
-//     applySceneSettings(settings);
-//   };
-//   reader.readAsText(file);
-// }
-
-// Function to import scene settings
-function importSceneSettings(jsonSettings) {
-  //console.log(jsonSettings);
-  const settings = JSON.parse(JSON.parse(jsonSettings));
-  //console.log(settings);
-  applySceneSettings(settings);
+function importSceneSettings(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const settings = JSON.parse(e.target.result);
+        applySceneSettings(settings);
+    };
+    reader.readAsText(file);
 }
 
 // Function to apply imported settings
 function applySceneSettings(settings) {
-  // Apply each setting
-  shadowControls.shadowsEnabled = settings.shadowsEnabled;
-  shadowControls.toggleShadows();
+    // Apply each setting
+    shadowControls.shadowsEnabled = settings.shadowsEnabled;
+    shadowControls.toggleShadows();
+    
+    envMapControls.envMapIntensity = settings.envMapIntensity;
+    scene.traverse((obj) => {
+        if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
+            obj.material.envMapIntensity = settings.envMapIntensity;
+            obj.material.needsUpdate = true;
+        }
+    });
 
-  envMapControls.envMapIntensity = settings.envMapIntensity;
-  scene.traverse((obj) => {
-    if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
-      obj.material.envMapIntensity = settings.envMapIntensity;
-      obj.material.needsUpdate = true;
+    toneMappingControl.toneMapping = settings.toneMapping;
+    renderer.toneMapping = toneMappingOptions[settings.toneMapping];
+    scene.traverse((obj) => {
+        if (obj.material) {
+            obj.material.needsUpdate = true;
+        }
+    });
+
+    outputEncodingControl.outputEncoding = settings.outputEncoding;
+    renderer.outputEncoding = outputEncodingOptions[settings.outputEncoding];
+
+    exposureControl.exposure = settings.exposure;
+    renderer.toneMappingExposure = settings.exposure;
+
+    settings.backgroundColor = settings.backgroundColor;
+    settings.backgroundIntensity = settings.backgroundIntensity;
+    settings.transparentBackground = settings.transparentBackground;
+    updateBackgroundColorIntensity();
+
+    autoRotateControls.enabled = settings.autoRotateEnabled;
+    autoRotateControls.speed = settings.autoRotateSpeed;
+    controls.autoRotate = settings.autoRotateEnabled;
+    controls.autoRotateSpeed = settings.autoRotateSpeed;
+
+    // Update GUI controllers
+    for (let i in gui.__controllers) {
+        gui.__controllers[i].updateDisplay();
     }
-  });
-
-  toneMappingControl.toneMapping = settings.toneMapping;
-  renderer.toneMapping = toneMappingOptions[settings.toneMapping];
-  scene.traverse((obj) => {
-    if (obj.material) {
-      obj.material.needsUpdate = true;
-    }
-  });
-
-  outputEncodingControl.outputEncoding = settings.outputEncoding;
-  renderer.outputEncoding = outputEncodingOptions[settings.outputEncoding];
-
-  exposureControl.exposure = settings.exposure;
-  renderer.toneMappingExposure = settings.exposure;
-
-  settings.backgroundColor = settings.backgroundColor;
-  settings.backgroundIntensity = settings.backgroundIntensity;
-  settings.transparentBackground = settings.transparentBackground;
-  updateBackgroundColorIntensity();
-
-  // autoRotateControls.enabled = settings.autoRotateEnabled;
-  //  autoRotateControls.speed = settings.autoRotateSpeed;
-  //  controls.autoRotate = settings.autoRotateEnabled;
-  //  controls.autoRotateSpeed = settings.autoRotateSpeed;
-
-  // Update GUI controllers
-  for (let i in gui.__controllers) {
-    gui.__controllers[i].updateDisplay();
-  }
 }
 
 // Add new GUI controls for exporting and importing settings
-gui
-  .add({ exportSettings: exportSceneSettings }, "exportSettings")
-  .name("Save Settings");
+gui.add({ exportSettings: exportSceneSettings }, 'exportSettings').name('Export Settings');
 
 // Create a hidden file input for importing
-const importInput = document.createElement("input");
-importInput.type = "file";
-importInput.style.display = "none";
-importInput.accept = ".json";
+const importInput = document.createElement('input');
+importInput.type = 'file';
+importInput.style.display = 'none';
+importInput.accept = '.json';
 document.body.appendChild(importInput);
 
-importInput.addEventListener("change", (event) => {
-  const file = event.target.files[0];
-  if (file) {
-    importSceneSettings(file);
-  }
+importInput.addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    if (file) {
+        importSceneSettings(file);
+    }
 });
 
-//gui
-//  .add({ importSettings: () => importInput.click() }, "importSettings")
-//  .name("Import Settings");
+gui.add({ importSettings: () => importInput.click() }, 'importSettings').name('Import Settings');
 
 function handleContextLost() {
-  console.warn("WebGL context lost. Attempting to restore...");
-  renderer.setAnimationLoop(null);
-
-  // Attempt to restore the context
-  const canvas = renderer.domElement;
-  canvas.addEventListener("webglcontextrestored", handleContextRestored, {
-    once: true,
-  });
+    console.warn('WebGL context lost. Attempting to restore...');
+    renderer.setAnimationLoop(null);
+    
+    // Attempt to restore the context
+    const canvas = renderer.domElement;
+    canvas.addEventListener('webglcontextrestored', handleContextRestored, { once: true });
 }
 
 // Add this function to handle WebGL context restoration
 function handleContextRestored() {
-  console.log("WebGL context restored.");
-  renderer.setAnimationLoop(animate);
+    console.log('WebGL context restored.');
+    renderer.setAnimationLoop(animate);
 }
 
 // Add event listener for context lost
-renderer.domElement.addEventListener("webglcontextlost", handleContextLost);
+renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
+
+// Create a function to generate the world axes helper
+function createCustomWorldAxesHelper(size = 1) {
+  const axesGroup = new THREE.Group();
+
+  // Create axes lines
+  const axes = new THREE.AxesHelper(size);
+  axesGroup.add(axes);
+
+  // Create labels
+  const labelSize = 0.05; // Significantly reduced label size
+  const labels = ['X', 'Y', 'Z'];
+  const colors = [0xff0000, 0x00ff00, 0x0000ff];
+
+  labels.forEach((label, index) => {
+      const spriteMaterial = new THREE.SpriteMaterial({
+          map: createTextTexture(label, colors[index]),
+          sizeAttenuation: true // Enable size attenuation
+      });
+      const sprite = new THREE.Sprite(spriteMaterial);
+      sprite.position.setComponent(index, size + 0.05); // Position just beyond the end of each axis
+      sprite.scale.set(labelSize, labelSize, labelSize);
+      axesGroup.add(sprite);
+  });
+
+  return axesGroup;
+}
+
+
+// Helper function to create text texture for labels
+function createTextTexture(text, color) {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  canvas.width = 64;
+  canvas.height = 64;
+
+  context.font = 'Bold 48px Arial';
+  context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, 32, 32);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  return texture;
+}
+
+// Create the custom axes helper
+const customWorldAxesHelper = createCustomWorldAxesHelper(0.5); // Adjust size as needed
+scene.add(customWorldAxesHelper);
+
+// Function to update the position of the axes helper to the model's pivot point
+function updateAxesHelperPosition(model) {
+  if (model && customWorldAxesHelper) {
+      const boundingBox = new THREE.Box3().setFromObject(model);
+      const center = boundingBox.getCenter(new THREE.Vector3());
+      const size = boundingBox.getSize(new THREE.Vector3());
+      const maxDimension = Math.max(size.x, size.y, size.z);
+      
+      customWorldAxesHelper.position.set(center.x, boundingBox.min.y, center.z);
+      customWorldAxesHelper.scale.setScalar(maxDimension * 0.5); // Adjust scale factor as needed
+  }
+}
+
+// Add GUI control to toggle axes visibility
+gui.add({ 
+  toggleAxes: function() {
+      customWorldAxesHelper.visible = !customWorldAxesHelper.visible;
+  }
+}, 'toggleAxes').name('Toggle World Axes');
+
+//gui.hide();
+
+function animate() {
+  requestAnimationFrame(animate);
+  
+  const delta = clock.getDelta();
+  if (mixer) {
+      mixer.update(delta);
+  }
+  
+  controls.autoRotate = autoRotateControls.enabled;
+  controls.autoRotateSpeed = autoRotateControls.speed;
+  
+  controls.update();
+  
+  try {
+      renderer.render(scene, camera);
+      if (isCapturing) {
+          // Check if we've completed a full rotation
+          if (scene.rotation.y >= Math.PI * 2) {
+              stopVideoCapture();
+          }
+      }
+  } catch (error) {
+      console.error('Render error:', error);
+      renderer.resetState();
+  }
+}
+animate();
+
+
 // handle the API response
 const handleAPIResponse = () => {
-  const fileUrl = "/c35-0050-1718081919473.fbx";
+  const fileUrl = "/BO2.glb";
   const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
   console.log(fileUrl);
   fetch(fileUrl)
