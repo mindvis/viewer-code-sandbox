@@ -926,7 +926,7 @@ function exportSceneAsPNG() {
   )
   .name("Export Dimensions");*/
 
-gui.hide();
+
 // Add button in dat.GUI to toggle bounding box visibility
 gui.add({ toggleDimensions: function() {
     const dimensionsDiv = document.getElementById('model-dimensions');
@@ -1135,6 +1135,8 @@ gui.add({
       customWorldAxesHelper.visible = !customWorldAxesHelper.visible;
   }
 }, 'toggleAxes').name('Toggle World Axes');
+
+//gui.hide();
 
 function animate() {
   requestAnimationFrame(animate);
