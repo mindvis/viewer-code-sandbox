@@ -104,7 +104,7 @@ scene.traverse((obj) => {
 });
 
 // Set up shadow properties for the light
-const light = new THREE.DirectionalLight(0xffffff, 0.8);
+const light = new THREE.DirectionalLight(0xffffff, 0);
 light.position.set(0, 10, 0);
 light.castShadow = true;
 scene.add(light);
@@ -686,31 +686,60 @@ gui
     });
   });
 
-const toneMappingOptions = {
-  Linear: THREE.NoToneMapping,
-  ACESFilmic: THREE.ACESFilmicToneMapping,
-  Cineon: THREE.CineonToneMapping,
-  Reinhard: THREE.ReinhardToneMapping,
+  const toneMappingOptions = {
+    'Neutral': THREE.NeutralToneMapping,
+    'ACESFilmic': THREE.ACESFilmicToneMapping
 };
 
 // Object to hold the current tone mapping setting
 const toneMappingControl = {
-  toneMapping: "ACESFilmic", // Default tone mapping
+    toneMapping: 'Neutral', // Set Neutral as default
+    exposure: 1.0
 };
 
+// Initialize renderer with correct settings for Neutral tone mapping
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace; // Ensure correct color space
+renderer.toneMappingExposure = 1.0;
+
 // Add tone mapping control
-gui
-  .add(toneMappingControl, "toneMapping", Object.keys(toneMappingOptions))
-  .name("Tone Mapping")
-  .onChange((value) => {
-    renderer.toneMapping = toneMappingOptions[value];
-    // Important: When changing tone mapping, materials need to be updated
-    scene.traverse((obj) => {
-      if (obj.material) {
-        obj.material.needsUpdate = true;
-      }
+gui.add(toneMappingControl, 'toneMapping', Object.keys(toneMappingOptions))
+    .name('Tone Mapping')
+    .onChange((value) => {
+        renderer.toneMapping = toneMappingOptions[value];
+        
+        // Update exposure and color handling based on tone mapping mode
+        if (value === 'Neutral') {
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMappingExposure = 1.0;
+            // Update exposure control range
+            exposureController.min(0.5).max(1.5).step(0.01);
+            exposureController.updateDisplay();
+        } else { // ACESFilmic
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMappingExposure = 1.0;
+            // Update exposure control range
+            exposureController.min(0).max(2).step(0.01);
+            exposureController.updateDisplay();
+        }
+        
+        // Update materials
+        scene.traverse((obj) => {
+            if (obj.material) {
+                obj.material.needsUpdate = true;
+            }
+        });
     });
-  });
+
+// Add separate exposure control with appropriate ranges
+const exposureController = gui.add(toneMappingControl, 'exposure')
+    .name('Exposure')
+    .min(0.5)
+    .max(1.5)
+    .step(0.01)
+    .onChange((value) => {
+        renderer.toneMappingExposure = value;
+    });
 
 const outputEncodingOptions = {
   sRGB: THREE.sRGBEncoding,
