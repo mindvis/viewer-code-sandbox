@@ -788,6 +788,48 @@ gui.add(autoRotateControls, 'speed', 0.1, 5).name('Rotation Speed').onChange(val
     controls.autoRotateSpeed = value;
 });
 
+// Add double tap/click detection
+let lastTap = 0;
+let lastRightClick = 0;
+const DOUBLE_CLICK_DELAY = 300; // ms between clicks/taps
+
+// Add event listener for right double click
+renderer.domElement.addEventListener('contextmenu', (event) => {
+    event.preventDefault(); // Prevent default right-click menu
+    
+    const currentTime = new Date().getTime();
+    const tapLength = currentTime - lastRightClick;
+    
+    if (tapLength < DOUBLE_CLICK_DELAY && tapLength > 0) {
+        resetAndStartAutoRotate(); // Call existing reset function
+    }
+    lastRightClick = currentTime;
+});
+
+// Track touch points
+let touchCount = 0;
+
+// Add touch start listener to track number of touches
+renderer.domElement.addEventListener('touchstart', (event) => {
+    touchCount = event.touches.length;
+});
+
+// Add event listener for double tap on mobile
+renderer.domElement.addEventListener('touchend', (event) => {
+    // Only process if it was a single touch point
+    if (touchCount === 1) {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap;
+        
+        if (tapLength < DOUBLE_CLICK_DELAY && tapLength > 0) {
+            event.preventDefault(); // Prevent default touch behavior
+            resetAndStartAutoRotate(); // Call existing reset function
+        }
+        lastTap = currentTime;
+    }
+    touchCount = 0; // Reset touch count
+});
+
 function resetAndStartAutoRotate() {
   // Get the bounding box of the loaded model
   const boundingBox = new THREE.Box3().setFromObject(scene);
@@ -819,8 +861,8 @@ function resetAndStartAutoRotate() {
   }
 }
 
+// The existing GUI button setup remains the same
 gui.add({ resetAndRotate: resetAndStartAutoRotate }, 'resetAndRotate').name('Reset & Auto-Rotate');
-
 
 const settings = {
   backgroundColor: "#ffffff", // Default white background
@@ -980,18 +1022,21 @@ const guiControls = {
 
 // Function to get current scene settings
 function getSceneSettings() {
-    return {
-        shadowsEnabled: shadowControls.shadowsEnabled,
-        envMapIntensity: envMapControls.envMapIntensity,
-        toneMapping: toneMappingControl.toneMapping,
-        outputEncoding: outputEncodingControl.outputEncoding,
-        exposure: exposureControl.exposure,
-        backgroundColor: settings.backgroundColor,
-        backgroundIntensity: settings.backgroundIntensity,
-        transparentBackground: settings.transparentBackground,
-        autoRotateEnabled: autoRotateControls.enabled,
-        autoRotateSpeed: autoRotateControls.speed
-    };
+  return {
+      shadowsEnabled: shadowControls.shadowsEnabled,
+      envMapIntensity: envMapControls.envMapIntensity,
+      toneMapping: toneMappingControl.toneMapping,
+      toneMappingExposure: toneMappingControl.exposure, // Add the specific tone mapping exposure
+      outputEncoding: outputEncodingControl.outputEncoding,
+      exposure: exposureControl.exposure,
+      backgroundColor: settings.backgroundColor,
+      backgroundIntensity: settings.backgroundIntensity,
+      transparentBackground: settings.transparentBackground,
+      autoRotateEnabled: autoRotateControls.enabled,
+      autoRotateSpeed: autoRotateControls.speed,
+      dimensionsVisible: document.getElementById('model-dimensions')?.style.display !== 'none',
+      worldAxesVisible: customWorldAxesHelper.visible
+  };
 }
 
 // Function to export scene settings
@@ -1015,47 +1060,58 @@ function importSceneSettings(file) {
 }
 
 // Function to apply imported settings
-function applySceneSettings(settings) {
-    // Apply each setting
-    shadowControls.shadowsEnabled = settings.shadowsEnabled;
-    shadowControls.toggleShadows();
-    
-    envMapControls.envMapIntensity = settings.envMapIntensity;
-    scene.traverse((obj) => {
-        if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
-            obj.material.envMapIntensity = settings.envMapIntensity;
-            obj.material.needsUpdate = true;
-        }
-    });
+function applySceneSettings(loadedSettings) {
+  // Apply previous settings...
+  shadowControls.shadowsEnabled = loadedSettings.shadowsEnabled;
+  shadowControls.toggleShadows();
+  
+  envMapControls.envMapIntensity = loadedSettings.envMapIntensity;
+  scene.traverse((obj) => {
+      if (obj.isMesh && obj.material && obj.material.isMeshStandardMaterial) {
+          obj.material.envMapIntensity = loadedSettings.envMapIntensity;
+          obj.material.needsUpdate = true;
+      }
+  });
 
-    toneMappingControl.toneMapping = settings.toneMapping;
-    renderer.toneMapping = toneMappingOptions[settings.toneMapping];
-    scene.traverse((obj) => {
-        if (obj.material) {
-            obj.material.needsUpdate = true;
-        }
-    });
+  toneMappingControl.toneMapping = loadedSettings.toneMapping;
+  toneMappingControl.exposure = loadedSettings.toneMappingExposure;
+  renderer.toneMapping = toneMappingOptions[loadedSettings.toneMapping];
+  renderer.toneMappingExposure = loadedSettings.toneMappingExposure;
 
-    outputEncodingControl.outputEncoding = settings.outputEncoding;
-    renderer.outputEncoding = outputEncodingOptions[settings.outputEncoding];
+  outputEncodingControl.outputEncoding = loadedSettings.outputEncoding;
+  renderer.outputEncoding = outputEncodingOptions[loadedSettings.outputEncoding];
 
-    exposureControl.exposure = settings.exposure;
-    renderer.toneMappingExposure = settings.exposure;
+  exposureControl.exposure = loadedSettings.exposure;
 
-    settings.backgroundColor = settings.backgroundColor;
-    settings.backgroundIntensity = settings.backgroundIntensity;
-    settings.transparentBackground = settings.transparentBackground;
-    updateBackgroundColorIntensity();
+  // Update the settings object directly
+  settings.backgroundColor = loadedSettings.backgroundColor;
+  settings.backgroundIntensity = loadedSettings.backgroundIntensity;
+  settings.transparentBackground = loadedSettings.transparentBackground;
 
-    autoRotateControls.enabled = settings.autoRotateEnabled;
-    autoRotateControls.speed = settings.autoRotateSpeed;
-    controls.autoRotate = settings.autoRotateEnabled;
-    controls.autoRotateSpeed = settings.autoRotateSpeed;
+  // Apply background changes
+  scene.background = new THREE.Color(settings.backgroundColor);
+  updateBackgroundColorIntensity();
 
-    // Update GUI controllers
-    for (let i in gui.__controllers) {
-        gui.__controllers[i].updateDisplay();
-    }
+  autoRotateControls.enabled = loadedSettings.autoRotateEnabled;
+  autoRotateControls.speed = loadedSettings.autoRotateSpeed;
+  controls.autoRotate = loadedSettings.autoRotateEnabled;
+  controls.autoRotateSpeed = loadedSettings.autoRotateSpeed;
+
+ // Apply dimension visibility
+ const dimensionsDiv = document.getElementById('model-dimensions');
+ if (dimensionsDiv) {
+     dimensionsDiv.style.display = loadedSettings.dimensionsVisible ? 'block' : 'none';
+ }
+
+ // Apply world axes visibility
+ if (customWorldAxesHelper) {
+     customWorldAxesHelper.visible = loadedSettings.worldAxesVisible;
+ }
+
+  // Update GUI controllers
+  for (let i in gui.__controllers) {
+      gui.__controllers[i].updateDisplay();
+  }
 }
 
 // Add new GUI controls for exporting and importing settings
