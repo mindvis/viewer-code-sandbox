@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 // project-imports
 import { Grid, Stack, Typography, Box } from "@mui/material";
 // import AuthWrapper from 'sections/auth/AuthWrapper';
@@ -13,16 +13,18 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 
+
+
 let mixer;
 const clock = new THREE.Clock();
 let currentAnimation = null;
 
-let mediaRecorder;
+/*let mediaRecorder;
 let recordedChunks = [];
 let isCapturing = false;
 
 let captureFrames = [];
-let captureStartTime;
+let captureStartTime;*/
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -687,18 +689,20 @@ gui
   });
 
   const toneMappingOptions = {
-    'Neutral': THREE.NeutralToneMapping,
+    'Linear': 
+              THREE.LinearToneMapping,
     'ACESFilmic': THREE.ACESFilmicToneMapping
 };
 
 // Object to hold the current tone mapping setting
 const toneMappingControl = {
-    toneMapping: 'Neutral', // Set Neutral as default
+    toneMapping: 'Linear', // Set Neutral as default
     exposure: 1.0
 };
 
 // Initialize renderer with correct settings for Neutral tone mapping
-renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMapping =  
+                        THREE.LinearToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace; // Ensure correct color space
 renderer.toneMappingExposure = 1.0;
 
@@ -706,10 +710,11 @@ renderer.toneMappingExposure = 1.0;
 gui.add(toneMappingControl, 'toneMapping', Object.keys(toneMappingOptions))
     .name('Tone Mapping')
     .onChange((value) => {
+      
         renderer.toneMapping = toneMappingOptions[value];
         
         // Update exposure and color handling based on tone mapping mode
-        if (value === 'Neutral') {
+        if (value === 'Linear') {
             renderer.outputColorSpace = THREE.SRGBColorSpace;
             renderer.toneMappingExposure = 1.0;
             // Update exposure control range
