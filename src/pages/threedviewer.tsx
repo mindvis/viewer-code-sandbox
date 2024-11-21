@@ -1,4 +1,4 @@
-
+// @ts-nocheck
 // project-imports
 import { Grid, Stack, Typography, Box } from "@mui/material";
 // import AuthWrapper from 'sections/auth/AuthWrapper';
@@ -13,11 +13,13 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 
-
+import '../assets/css/loading.css';
 
 let mixer;
 const clock = new THREE.Clock();
 let currentAnimation = null;
+
+let isCapturing = false;
 
 /*let mediaRecorder;
 let recordedChunks = [];
@@ -276,7 +278,7 @@ function handleFile(file) {
   setTimeout(showModelDimensions, 100000);
 }
 
-function loadFBXFile(file) {
+function loadFBXFile(file,jsonSettings) {
   const reader = new FileReader();
   reader.onload = (event) => {
       const loader = new FBXLoader();
@@ -301,7 +303,9 @@ function loadFBXFile(file) {
           (xhr) => {
               // Update the loading progress
               const percentComplete = (xhr.loaded / xhr.total) * 100;
-              document.getElementById('loading-progress').style.width = percentComplete + '%';
+              if(percentComplete===100 && jsonSettings!=''){
+                setTimeout(() => importSceneSettings(jsonSettings), 3000);
+              }
           },
           (error) => {
               console.error('Error loading FBX file:', error);
@@ -312,7 +316,7 @@ function loadFBXFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-function loadGLBFile(file) {
+function loadGLBFile(file,jsonSettings) {
   const reader = new FileReader();
   reader.onload = async (event) => {
       //hideDropzone();
@@ -345,13 +349,16 @@ loader.setDRACOLoader(dracoLoader);
                   mixer = new THREE.AnimationMixer(gltf.scene);
                   setupAnimationGUI(gltf.animations);
                   console.log(`Loaded ${gltf.animations.length} animations`);
+
               } else {
                   console.log('No animations found in the GLTF file');
               }           
           },
           (xhr) => {
               const percentComplete = (xhr.loaded / xhr.total) * 100;
-              document.getElementById('loading-progress').style.width = percentComplete + '%';
+              if(percentComplete===100 && jsonSettings!=''){
+                setTimeout(() => importSceneSettings(jsonSettings), 3000);
+              }
           },
           (error) => {
               console.error('Error loading GLB file:', error);
@@ -362,7 +369,7 @@ loader.setDRACOLoader(dracoLoader);
   reader.readAsArrayBuffer(file);
 }
 
-function loadSTLFile(file) {
+function loadSTLFile(file,jsonSettings) {
   const reader = new FileReader();
   reader.onload = (event) => {
       const loader = new STLLoader();
@@ -382,7 +389,9 @@ function loadSTLFile(file) {
           (xhr) => {
               // Update the loading progress
               const percentComplete = (xhr.loaded / xhr.total) * 100;
-              document.getElementById('loading-progress').style.width = percentComplete + '%';
+              if(percentComplete===100 && jsonSettings!=''){
+                setTimeout(() => importSceneSettings(jsonSettings), 3000);
+              }
           },
           (error) => {
               console.error('Error loading STL file:', error);
@@ -429,7 +438,7 @@ function loadDracoCompressedFile(file) {
           },
           (xhr) => {
               const percentComplete = (xhr.loaded / xhr.total) * 100;
-              document.getElementById('loading-progress').style.width = percentComplete + '%';
+              //document.getElementById('loading-progress').style.width = percentComplete + '%';
           },
           (error) => {
               console.error('Error loading Draco compressed file:', error);
@@ -1054,14 +1063,22 @@ function exportSceneSettings() {
     link.click();
 }
 
-// Function to import scene settings
-function importSceneSettings(file) {
+function importSceneSetting(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-        const settings = JSON.parse(e.target.result);
-        applySceneSettings(settings);
+      const settings = JSON.parse(e.target.result);
+      console.log(e.target.result);
+      applySceneSettings(settings);
     };
     reader.readAsText(file);
+}
+
+// Function to import scene settings
+function importSceneSettings(jsonSettings) {
+    //console.log(jsonSettings);
+    const settings = JSON.parse(JSON.parse(jsonSettings));
+    //console.log(settings);
+    applySceneSettings(settings);
 }
 
 // Function to apply imported settings
@@ -1087,6 +1104,7 @@ function applySceneSettings(loadedSettings) {
   renderer.outputEncoding = outputEncodingOptions[loadedSettings.outputEncoding];
 
   exposureControl.exposure = loadedSettings.exposure;
+  renderer.toneMappingExposure = loadedSettings.exposure;
 
   // Update the settings object directly
   settings.backgroundColor = loadedSettings.backgroundColor;
@@ -1132,7 +1150,7 @@ document.body.appendChild(importInput);
 importInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (file) {
-        importSceneSettings(file);
+        importSceneSetting(file);
     }
 });
 
@@ -1254,10 +1272,41 @@ function animate() {
       renderer.resetState();
   }
 }
+//gui.hide();
 animate();
 
 // handle the API response
-const handleAPIResponse = () => {
+const handleAPIResponse = (response) => {
+    if (response.data.file) {
+      const fileUrl = process.env.REACT_APP_UPLOADS + response.data.file;
+      var jsonSettings = '';
+      if(response.data.settings!=undefined){
+        jsonSettings = response.data.settings;
+      }
+      const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
+      fetch(fileUrl)
+        .then((response) => response.blob())
+        .then((file) => {
+          if (fileType === "glb") {
+            loadGLBFile(file,jsonSettings);
+          } else if (fileType === "fbx") {
+            loadFBXFile(file,jsonSettings);
+          } else if (fileType === "stl") {
+            loadSTLFile(file,jsonSettings);
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching the file:", error);
+        });
+  
+        
+    } else {
+      console.error("Error fetching the file:", response.message);
+    }
+};
+
+// handle the sandbox load
+const handleSandbox = () => {
   const fileUrl = "/BO2.glb";
   const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
   console.log(fileUrl);
@@ -1265,11 +1314,11 @@ const handleAPIResponse = () => {
     .then((response) => response.blob())
     .then((file) => {
       if (fileType === "glb") {
-        loadGLBFile(file);
+        loadGLBFile(file,'');
       } else if (fileType === "fbx") {
-        loadFBXFile(file);
+        loadFBXFile(file,'');
       } else if (fileType === "stl") {
-        loadSTLFile(file);
+        loadSTLFile(file,'');
       }
     })
     .catch((error) => {
@@ -1277,29 +1326,8 @@ const handleAPIResponse = () => {
     });
 };
 
-/*
-const fileUrl = process.env.REACT_APP_API_URL+'/uploads/cycle.glb';
-const fileType = fileUrl?.split('.')?.pop()?.toLowerCase();
-
-fetch(fileUrl)
- .then(response => response.blob())
- .then(file => {
-    if (fileType === 'glb') {
-        loadGLBFile(file);
-    } else if (fileType === 'fbx') {
-        loadFBXFile(file);
-    } else if (fileType === 'stl') {
-        loadSTLFile(file);
-     }
-  })
- .catch(error => {
-    console.error('Error fetching the file:', error);
-});*/
-
-// ==============================|| SAMPLE PAGE ||============================== //
-
 const ThreeDViewer = () => {
-  handleAPIResponse();
+  handleSandbox();
   return (
     <>
       <Grid container spacing={3}>

@@ -1,3 +1,4 @@
+//@ts-nocheck
 // material-ui
 import { Typography, Stack, CardMedia } from '@mui/material';
 

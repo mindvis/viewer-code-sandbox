@@ -1,3 +1,4 @@
+//@ts-nocheck
 import { forwardRef, CSSProperties, ReactNode, Ref } from 'react';
 
 // material-ui

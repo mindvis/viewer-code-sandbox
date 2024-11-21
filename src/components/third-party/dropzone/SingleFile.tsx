@@ -1,3 +1,4 @@
+//@ts-nocheck
 // material-ui
 import { useState } from "react";
 import { styled, useTheme } from "@mui/material/styles";

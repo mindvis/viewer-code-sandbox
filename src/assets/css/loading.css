@@ -1,0 +1,44 @@
+body{
+  background-color: #FFFFFF !important;
+}
+.append {
+  margin: 40vh auto;
+  width: 80px;
+}
+
+.bars {
+  display: block;
+  width: 80px;
+  height: 10px;
+  background: #07cda4;
+  border-radius: 5px;
+  margin: 3px 0;
+  opacity: 0.0; /* initial state */
+  animation: pulsate 1s ease-out infinite;
+}
+
+#bar1 {
+  animation-delay: 0s;
+}
+
+#bar2 {
+  animation-delay: 0.2s;
+}
+
+#bar3 {
+  animation-delay: 0.4s;
+}
+
+@keyframes pulsate {
+  0% {
+    transform: scale(0.1, 0.1);
+    opacity: 0.0;
+  }
+  50% {
+    opacity: 1.0;
+  }
+  100% {
+    transform: scale(1, 1);
+    opacity: 0.0;
+  }
+}

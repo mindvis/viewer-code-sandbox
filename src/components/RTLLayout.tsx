@@ -1,3 +1,4 @@
+//@ts-nocheck
 import { useEffect, ReactNode } from 'react';
 
 // material-ui

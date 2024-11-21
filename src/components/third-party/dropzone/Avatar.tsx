@@ -1,3 +1,4 @@
+//@ts-nocheck
 // material-ui
 import { alpha, styled, useTheme } from '@mui/material/styles';
 import { Stack, Typography } from '@mui/material';

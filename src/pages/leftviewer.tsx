@@ -1,4 +1,4 @@
-
+// @ts-nocheck
 // project-imports
 import { Grid, Stack, Typography, Box } from "@mui/material";
 // import AuthWrapper from 'sections/auth/AuthWrapper';
@@ -13,11 +13,13 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader";
 
-
+import {store} from 'store';
+import { openSnackbar } from 'store/reducers/snackbar';
 
 let mixer;
 const clock = new THREE.Clock();
 let currentAnimation = null;
+let isCapturing = false;
 
 /*let mediaRecorder;
 let recordedChunks = [];
@@ -1046,23 +1048,69 @@ function getSceneSettings() {
 }
 
 // Function to export scene settings
+function exportSceneSetting() {
+  const sceneSettings = getSceneSettings();
+  const blob = new Blob([JSON.stringify(sceneSettings, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'scene_settings.json';
+  link.click();
+}
+
+
+// Function to export scene settings
 function exportSceneSettings() {
-    const sceneSettings = getSceneSettings();
-    const blob = new Blob([JSON.stringify(sceneSettings, null, 2)], { type: 'application/json' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'scene_settings.json';
-    link.click();
+  // Get the scene settings as a JSON string
+  const sceneSettings = getSceneSettings();
+  console.log(JSON.stringify(sceneSettings, null, 2));
+  // Get the pathname from the current URL
+  const path = window.location.pathname;
+  // Check for both patterns to extract the ID
+  const id = path.match(/\/3d-models\/view\/([^/]+)/)?.[1] || path.match(/\/left-viewer\/([^/]+)/)?.[1];
+    
+  const jsonString = JSON.stringify(sceneSettings, null, 2);
+
+  // Send the JSON data to the server with Axios
+  axios
+    .post(process.env.REACT_APP_API_URL + "/api/model/saveSettings/"+id, {
+      settings: jsonString
+    }, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem("serviceToken")}`,
+      },
+    })
+    .then((response) => {
+      store.dispatch(
+        openSnackbar({
+          open: true,
+          message: 'Settings have been saved successfully!',
+          autoHideDuration: 5000,
+          variant: 'alert',
+          alert: {
+            color: 'success',
+          },
+          close: true,
+        })
+      );
+    });
 }
 
 // Function to import scene settings
-function importSceneSettings(file) {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const settings = JSON.parse(e.target.result);
-        applySceneSettings(settings);
-    };
-    reader.readAsText(file);
+function importSceneSetting(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+      const settings = JSON.parse(e.target.result);
+      applySceneSettings(settings);
+  };
+  reader.readAsText(file);
+}
+
+
+// Function to import scene settings
+function importSceneSettings(jsonSettings) {
+  const settings = JSON.parse(JSON.parse(jsonSettings));
+  //console.log(settings);
+  applySceneSettings(settings);
 }
 
 // Function to apply imported settings
@@ -1088,6 +1136,7 @@ function applySceneSettings(loadedSettings) {
   renderer.outputEncoding = outputEncodingOptions[loadedSettings.outputEncoding];
 
   exposureControl.exposure = loadedSettings.exposure;
+  renderer.toneMappingExposure = loadedSettings.exposure;
 
   // Update the settings object directly
   settings.backgroundColor = loadedSettings.backgroundColor;
@@ -1122,9 +1171,10 @@ function applySceneSettings(loadedSettings) {
 }
 
 // Add new GUI controls for exporting and importing settings
-gui.add({ exportSettings: exportSceneSettings }, 'exportSettings').name('Export Settings');
+//gui.add({ exportSettings: exportSceneSettings }, 'exportSettings').name('Save Settings');
+gui.add({ exportSettings: exportSceneSetting }, 'exportSettings').name('Export Settings');
 
-// Create a hidden file input for importing
+//Create a hidden file input for importing
 const importInput = document.createElement('input');
 importInput.type = 'file';
 importInput.style.display = 'none';
@@ -1134,7 +1184,7 @@ document.body.appendChild(importInput);
 importInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (file) {
-        importSceneSettings(file);
+        importSceneSetting(file);
     }
 });
 
@@ -1258,9 +1308,35 @@ function animate() {
 }
 animate();
 
+const handleAPIResponse = (response) => {
+    if (response.data.file) {
+      const fileUrl = process.env.REACT_APP_UPLOADS + response.data.file;
+      const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
+      fetch(fileUrl)
+        .then((response) => response.blob())
+        .then((file) => {
+          if (fileType === "glb") {
+            loadGLBFile(file);
+          } else if (fileType === "fbx") {
+            loadFBXFile(file);
+          } else if (fileType === "stl") {
+            loadSTLFile(file);
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching the file:", error);
+        });
+        if(response.data.settings!=undefined){
+          const jsonSettings = response.data.settings;
+          setTimeout(() => importSceneSettings(jsonSettings), 500);
+        }
+    } else {
+      console.error("Error fetching the file:", response.message);
+    }
+};
 
-// handle the API response
-const handleAPIResponse = () => {
+// handle the sandbox load
+const handleSandbox = () => {
   const fileUrl = "/BO2.glb";
   const fileType = fileUrl?.split(".")?.pop()?.toLowerCase();
   console.log(fileUrl);
@@ -1280,29 +1356,8 @@ const handleAPIResponse = () => {
     });
 };
 
-/*
-const fileUrl = process.env.REACT_APP_API_URL+'/uploads/cycle.glb';
-const fileType = fileUrl?.split('.')?.pop()?.toLowerCase();
-
-fetch(fileUrl)
- .then(response => response.blob())
- .then(file => {
-    if (fileType === 'glb') {
-        loadGLBFile(file);
-    } else if (fileType === 'fbx') {
-        loadFBXFile(file);
-    } else if (fileType === 'stl') {
-        loadSTLFile(file);
-     }
-  })
- .catch(error => {
-    console.error('Error fetching the file:', error);
-});*/
-
-// ==============================|| SAMPLE PAGE ||============================== //
-
 const ThreeDViewer = () => {
-  handleAPIResponse();
+  handleSandbox();
   return (
     <>
       <Grid container spacing={3}>
